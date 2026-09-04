@@ -8,5 +8,5 @@ export interface StorageObject {
 export interface Storage {
   read(path: string): Promise<Response>;
   write(path: string, body: ReadableStream<Uint8Array>, contentType: string, contentLength?: string | null): Promise<StorageObject>;
-  delete(path: string): Promise<void>;
+  delete(path: string): Promise<boolean>;
 }
