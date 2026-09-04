@@ -2,6 +2,7 @@ import type { Env } from "./config";
 import type { Storage } from "./storage";
 import { apiError, apiResponse, FsError, rawError } from "./response";
 import * as fs from "./filesystem";
+import { normalizePath } from "./path";
 
 export async function handleApi(request: Request, env: Env, storage: Storage): Promise<Response> {
   let body: any;
@@ -22,7 +23,7 @@ export async function handleApi(request: Request, env: Env, storage: Storage): P
       case "stat": payload = await fs.stat(env, body.payload); break;
       case "mkdir": payload = await fs.mkdir(env, body.payload); break;
       case "read": payload = await fs.readDescriptor(env, body.payload); break;
-      case "write": payload = fs.writeDescriptor(body.payload); break;
+      case "write": payload = { path: normalizePath(body.payload.path), data_interface: "raw" }; break;
       case "delete": payload = await fs.remove(env, storage, body.payload); break;
       default: return apiError(requestId, "INVALID_ACTION", `Unsupported filesystem action: ${body.action}`, 400);
     }
