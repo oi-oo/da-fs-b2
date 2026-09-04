@@ -80,6 +80,7 @@ export async function remove(env: Env, storage: Storage, payload: any) {
   const path = normalizePath(payload.path);
   if (path === "/") throw new FsError("INVALID_FIELD", "Root cannot be deleted", 400);
   const node = await resolve(env, path);
+
   if (node?.i2 === 1) {
     const child = await env.DB.prepare(`SELECT id FROM fs_nodes WHERE i1=? LIMIT 1`).bind(node.id).first();
     if (child) throw new FsError("DIRECTORY_NOT_EMPTY", `Directory is not empty: ${path}`, 409);
@@ -87,14 +88,9 @@ export async function remove(env: Env, storage: Storage, payload: any) {
     return { path, deleted: true };
   }
 
-  // Storage decides how a logical path is removed. For B2 this includes all versions.
-  // If the storage representation is already absent, the provider may treat delete as idempotent.
-  await storage.delete(path);
+  const storageExisted = await storage.delete(path);
+  if (!node && !storageExisted) throw new FsError("NOT_FOUND", `Path not found: ${path}`, 404);
   if (node) await env.DB.prepare(`DELETE FROM fs_nodes WHERE id=?`).bind(node.id).run();
-  else {
-    // A missing DB node with a successful storage delete is still a valid cleanup.
-    // The provider decides whether the underlying object existed.
-  }
   return { path, deleted: true };
 }
 
