@@ -5,14 +5,8 @@ export interface StorageObject {
   fileId: string | null;
 }
 
-export interface StorageVersion {
-  fileName: string;
-  fileId: string;
-}
-
 export interface Storage {
   read(path: string): Promise<Response>;
   write(path: string, body: ReadableStream<Uint8Array>, contentType: string, contentLength?: string | null): Promise<StorageObject>;
-  listVersions(path: string): Promise<StorageVersion[]>;
-  deleteVersion(version: StorageVersion): Promise<"deleted" | "missing">;
+  delete(path: string): Promise<void>;
 }
