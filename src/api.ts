@@ -22,7 +22,7 @@ export async function handleApi(request: Request, env: Env, storage: Storage): P
       case "stat": payload = await fs.stat(env, body.payload); break;
       case "mkdir": payload = await fs.mkdir(env, body.payload); break;
       case "read": payload = await fs.readDescriptor(env, body.payload); break;
-      case "write": payload = await fs.write(env, storage, body.payload, request.body, request.headers.get("Content-Type") || "application/octet-stream", request.headers.get("Content-Length")); break;
+      case "write": payload = fs.writeDescriptor(body.payload); break;
       case "delete": payload = await fs.remove(env, storage, body.payload); break;
       default: return apiError(requestId, "INVALID_ACTION", `Unsupported filesystem action: ${body.action}`, 400);
     }
@@ -46,9 +46,8 @@ export async function handleRaw(request: Request, env: Env, storage: Storage): P
     }
     if (action === "upload" || action === "write") {
       if (!fileKey) throw new FsError("INVALID_FIELD", "Missing X-DA-File-Key header", 400);
-      if (!request.body) throw new FsError("EMPTY_BODY", "Write body is empty", 400);
-      await fs.write(env, storage, { path: fileKey }, request.body, request.headers.get("Content-Type") || "application/octet-stream", request.headers.get("Content-Length"));
-      return new Response(null, { status: 204 });
+      const result = await fs.write(env, storage, { path: fileKey }, request.body, request.headers.get("Content-Type") || "application/octet-stream", request.headers.get("Content-Length"));
+      return Response.json(result, { status: 200 });
     }
     return rawError("INVALID_ACTION", `Unsupported raw action: ${action}`, 400);
   } catch (error: any) {
