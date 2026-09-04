@@ -1,0 +1,9 @@
+name = "da-fs-b2"
+main = "src/index.ts"
+compatibility_date = "2026-09-04"
+
+# Add your D1 database binding here before deployment.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "..."
+# database_id = "..."
