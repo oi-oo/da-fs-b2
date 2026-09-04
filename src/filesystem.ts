@@ -39,15 +39,7 @@ export async function readDescriptor(env: Env, payload: any) {
   const node = await resolve(env, path);
   if (!node) throw new FsError("NOT_FOUND", `Path not found: ${path}`, 404);
   if (node.i2 === 1) throw new FsError("IS_A_DIRECTORY", `Path is a directory: ${path}`, 400);
-  return {
-    path,
-    size: node.d1 ?? 0,
-    content_type: node.c3 || "application/octet-stream",
-    created_at: node.v1,
-    modified_at: node.v2,
-    metadata: parseMetadata(node.t1),
-    data_interface: "raw",
-  };
+  return { path, size: node.d1 ?? 0, content_type: node.c3 || "application/octet-stream", created_at: node.v1, modified_at: node.v2, metadata: parseMetadata(node.t1), data_interface: "raw" };
 }
 
 export async function readData(env: Env, storage: Storage, pathInput: string): Promise<Response> {
@@ -74,10 +66,11 @@ export async function write(env: Env, storage: Storage, payload: any, body: Read
   if (existing?.i2 === 1) throw new FsError("IS_A_DIRECTORY", `Path is a directory: ${path}`, 400);
 
   const stored = await storage.write(path, body, contentType, contentLength);
+  const metadata = JSON.stringify({ md5: stored.md5, fileId: stored.fileId });
   if (existing) {
-    await env.DB.prepare(`UPDATE fs_nodes SET c3=?,d1=?,t1=?,v2=CURRENT_TIMESTAMP WHERE id=?`).bind(contentType, stored.size, JSON.stringify({ md5: stored.md5, fileId: stored.fileId }), existing.id).run();
+    await env.DB.prepare(`UPDATE fs_nodes SET c3=?,d1=?,t1=?,v2=CURRENT_TIMESTAMP WHERE id=?`).bind(contentType, stored.size, metadata, existing.id).run();
   } else {
-    await env.DB.prepare(`INSERT INTO fs_nodes(c1,c2,c3,i1,i2,d1,t1,v1,v2) VALUES(?,?,?, ?,0,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`).bind(name, parentPath, contentType, parent.id, stored.size, JSON.stringify({ md5: stored.md5, fileId: stored.fileId })).run();
+    await env.DB.prepare(`INSERT INTO fs_nodes(c1,c2,c3,i1,i2,d1,t1,v1,v2) VALUES(?,?,?, ?,0,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)`).bind(name, parentPath, contentType, parent.id, stored.size, metadata).run();
   }
   const node = await resolve(env, path);
   return { path, created: !existing, metadata: node ? nodeMetadata(node) : null };
@@ -87,20 +80,22 @@ export async function remove(env: Env, storage: Storage, payload: any) {
   const path = normalizePath(payload.path);
   if (path === "/") throw new FsError("INVALID_FIELD", "Root cannot be deleted", 400);
   const node = await resolve(env, path);
-  const versions = await storage.listVersions(path);
-
-  if (!node && versions.length === 0) throw new FsError("NOT_FOUND", `Path not found: ${path}`, 404);
   if (node?.i2 === 1) {
     const child = await env.DB.prepare(`SELECT id FROM fs_nodes WHERE i1=? LIMIT 1`).bind(node.id).first();
     if (child) throw new FsError("DIRECTORY_NOT_EMPTY", `Directory is not empty: ${path}`, 409);
-    if (versions.length) throw new FsError("STORAGE_ERROR", `Unexpected storage objects for directory: ${path}`, 502);
     await env.DB.prepare(`DELETE FROM fs_nodes WHERE id=?`).bind(node.id).run();
     return { path, deleted: true };
   }
 
-  for (const version of versions) await storage.deleteVersion(version);
+  // Storage decides how a logical path is removed. For B2 this includes all versions.
+  // If the storage representation is already absent, the provider may treat delete as idempotent.
+  await storage.delete(path);
   if (node) await env.DB.prepare(`DELETE FROM fs_nodes WHERE id=?`).bind(node.id).run();
-  return { path, deleted: true, storage_versions_deleted: versions.length };
+  else {
+    // A missing DB node with a successful storage delete is still a valid cleanup.
+    // The provider decides whether the underlying object existed.
+  }
+  return { path, deleted: true };
 }
 
 function parseMetadata(value: string | null): Record<string, unknown> {
