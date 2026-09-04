@@ -15,8 +15,7 @@ export class B2Storage implements Storage {
   constructor(private env: Env, private ctx: ExecutionContext) {}
 
   async read(path: string): Promise<Response> {
-    const auth = await this.getAuth();
-    let response = await this.download(auth, path);
+    let response = await this.download(await this.getAuth(), path);
     if (response.status === 401) {
       await this.refreshAuth();
       response = await this.download(await this.getAuth(), path);
@@ -25,13 +24,10 @@ export class B2Storage implements Storage {
   }
 
   async write(path: string, body: ReadableStream<Uint8Array>, contentType: string, contentLength?: string | null): Promise<StorageObject> {
-    let auth = await this.getAuth();
-    let response = await this.upload(auth, path, body, contentType, contentLength);
+    const response = await this.upload(await this.getAuth(), path, body, contentType, contentLength);
     if (response.status === 401) {
       await this.refreshAuth();
-      auth = await this.getAuth();
-      throwIfBodyCannotRetry(body);
-      response = await this.upload(auth, path, body, contentType, contentLength);
+      throw new Error("B2 authentication expired during upload; retry operation");
     }
     if (!response.ok) throw new Error(`B2 upload failed (${response.status})`);
     const result = await response.json() as any;
@@ -44,19 +40,16 @@ export class B2Storage implements Storage {
   }
 
   async listVersions(path: string): Promise<StorageVersion[]> {
-    let auth = await this.getAuth();
-    let result = await this.listAllVersions(auth, path);
+    let result = await this.listAllVersions(await this.getAuth(), path);
     if (result === null) {
       await this.refreshAuth();
-      auth = await this.getAuth();
-      result = await this.listAllVersions(auth, path);
+      result = await this.listAllVersions(await this.getAuth(), path);
     }
     return result;
   }
 
   async deleteVersion(version: StorageVersion): Promise<"deleted" | "missing"> {
-    let auth = await this.getAuth();
-    let response = await this.deleteOne(auth, version);
+    let response = await this.deleteOne(await this.getAuth(), version);
     if (response.status === 401) {
       await this.refreshAuth();
       response = await this.deleteOne(await this.getAuth(), version);
@@ -73,14 +66,14 @@ export class B2Storage implements Storage {
 
   private async refreshAuth() {
     this.authPromise = undefined;
-    this.ctx.waitUntil(caches.default.delete(new Request(`https://cache.invalid/${AUTH_CACHE_KEY}`)));
+    await caches.default.delete(new Request(`https://cache.invalid/${AUTH_CACHE_KEY}`));
   }
 
   private async loadAuth(): Promise<B2Auth> {
     const cache = caches.default;
     const cacheRequest = new Request(`https://cache.invalid/${AUTH_CACHE_KEY}`);
     const cached = await cache.match(cacheRequest);
-    if (cached) return cached.json<B2Auth>();
+    if (cached) return await cached.json() as B2Auth;
 
     const credentials = btoa(`${this.env.B2_KEY_ID}:${this.env.B2_APPLICATION_KEY}`);
     const response = await fetch("https://api.backblazeb2.com/b2api/v2/b2_authorize_account", {
@@ -148,9 +141,4 @@ export class B2Storage implements Storage {
       body: JSON.stringify({ fileName: version.fileName, fileId: version.fileId }),
     });
   }
-}
-
-function throwIfBodyCannotRetry(body: ReadableStream<Uint8Array>) {
-  // A consumed request stream cannot safely be retried. The caller should retry the whole operation.
-  if (body.locked) throw new Error("B2 authentication expired after request body was consumed; retry operation");
 }
