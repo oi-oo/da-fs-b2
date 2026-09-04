@@ -1,10 +1,15 @@
 import type { Env } from "./config";
-import type { Storage, StorageObject, StorageVersion } from "./storage";
+import type { Storage, StorageObject } from "./storage";
 
 interface B2Auth {
   authorizationToken: string;
   apiUrl: string;
   downloadUrl: string;
+}
+
+interface B2Version {
+  fileName: string;
+  fileId: string;
 }
 
 const AUTH_CACHE_KEY = "da-fs-b2-auth";
@@ -39,24 +44,27 @@ export class B2Storage implements Storage {
     };
   }
 
-  async listVersions(path: string): Promise<StorageVersion[]> {
-    let result = await this.listAllVersions(await this.getAuth(), path);
-    if (result === null) {
+  async delete(path: string): Promise<void> {
+    let auth = await this.getAuth();
+    let versions = await this.listAllVersions(auth, path);
+    if (versions === null) {
       await this.refreshAuth();
-      result = await this.listAllVersions(await this.getAuth(), path);
+      auth = await this.getAuth();
+      versions = await this.listAllVersions(auth, path);
     }
-    return result;
-  }
 
-  async deleteVersion(version: StorageVersion): Promise<"deleted" | "missing"> {
-    let response = await this.deleteOne(await this.getAuth(), version);
-    if (response.status === 401) {
-      await this.refreshAuth();
-      response = await this.deleteOne(await this.getAuth(), version);
+    // B2 stores multiple versions under one filename. DA delete means removing
+    // the backend representation completely, so all B2 versions are removed here.
+    for (const version of versions) {
+      let response = await this.deleteOne(auth, version);
+      if (response.status === 401) {
+        await this.refreshAuth();
+        auth = await this.getAuth();
+        response = await this.deleteOne(auth, version);
+      }
+      if (response.status === 404) continue;
+      if (!response.ok) throw new Error(`B2 delete failed (${response.status})`);
     }
-    if (response.status === 404) return "missing";
-    if (!response.ok) throw new Error(`B2 delete failed (${response.status})`);
-    return "deleted";
   }
 
   private async getAuth(): Promise<B2Auth> {
@@ -109,8 +117,8 @@ export class B2Storage implements Storage {
     return fetch(info.uploadUrl, { method: "POST", headers, body });
   }
 
-  private async listAllVersions(auth: B2Auth, path: string): Promise<StorageVersion[] | null> {
-    const versions: StorageVersion[] = [];
+  private async listAllVersions(auth: B2Auth, path: string): Promise<B2Version[] | null> {
+    const versions: B2Version[] = [];
     let startFileName: string | undefined;
     let startFileId: string | undefined;
     do {
@@ -134,7 +142,7 @@ export class B2Storage implements Storage {
     return versions;
   }
 
-  private deleteOne(auth: B2Auth, version: StorageVersion) {
+  private deleteOne(auth: B2Auth, version: B2Version) {
     return fetch(`${auth.apiUrl}/b2api/v2/b2_delete_file_version`, {
       method: "POST",
       headers: { Authorization: auth.authorizationToken, "Content-Type": "application/json" },
